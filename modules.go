@@ -1,8 +1,8 @@
 package trojan
 
 import (
-	_ "github.com/imgk/caddy-trojan/app"
-	_ "github.com/imgk/caddy-trojan/modules/admin"
-	_ "github.com/imgk/caddy-trojan/modules/handler"
-	_ "github.com/imgk/caddy-trojan/modules/listener"
+	_ "github.com/avkiller/caddy-trojan/app"
+	_ "github.com/avkiller/caddy-trojan/modules/admin"
+	_ "github.com/avkiller/caddy-trojan/modules/handler"
+	_ "github.com/avkiller/caddy-trojan/modules/listener"
 )

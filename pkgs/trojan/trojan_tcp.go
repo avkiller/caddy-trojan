@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/imgk/memory-go"
+	"github.com/i/memory-go"
 )
 
 func copyBuffer(w io.Writer, r io.Reader, buf []byte) (n int64, err error) {

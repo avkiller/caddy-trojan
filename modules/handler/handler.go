@@ -32,18 +32,15 @@ func init() {
 
 // Handler implements an HTTP handler that ...
 type Handler struct {
-	WebSocket bool `json:"websocket,omitempty"`
-	Connect   bool `json:"connect_method,omitempty"`
-	Verbose   bool `json:"verbose,omitempty"`
+	ProxyName string `json:"proxy_name,omitempty"`
+	WebSocket bool   `json:"websocket,omitempty"`
+	Connect   bool   `json:"connect_method,omitempty"`
+	Verbose   bool   `json:"verbose,omitempty"`
 
-	// Upstream is ...
-	Upstream app.Upstream `json:"-,omitempty"`
-	// Proxy is ...
-	Proxy app.Proxy `json:"-,omitempty"`
-	// Logger is ...
-	Logger *zap.Logger `json:"-,omitempty"`
-	// Upgrader is ...
-	Upgrader websocket.Upgrader `json:"-,omitempty"`
+	upstream app.Upstream
+	proxy    app.Proxy
+	logger   *zap.Logger
+	upgrader websocket.Upgrader
 }
 
 // CaddyModule returns the Caddy module information.
@@ -56,8 +53,7 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 
 // Provision implements caddy.Provisioner.
 func (m *Handler) Provision(ctx caddy.Context) error {
-	m.Logger = ctx.Logger(m)
-	ctx.App(app.CaddyAppID)
+	m.logger = ctx.Logger(m)
 	if _, err := ctx.AppIfConfigured(app.CaddyAppID); err != nil {
 		return fmt.Errorf("trojan handler configure error: %w", err)
 	}
@@ -66,8 +62,16 @@ func (m *Handler) Provision(ctx caddy.Context) error {
 		return err
 	}
 	app := mod.(*app.App)
-	m.Upstream = app.GetUpstream()
-	m.Proxy = app.GetProxy()
+	m.upstream = app.GetUpstream()
+	if m.ProxyName == "" {
+		m.proxy = app.GetProxy()
+		return nil
+	}
+	var ok bool
+	m.proxy, ok = app.GetProxyByName(m.ProxyName)
+	if !ok {
+		return fmt.Errorf("proxy name: %v does not exist", m.ProxyName)
+	}
 	return nil
 }
 
@@ -84,24 +88,24 @@ func (m *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		if len(auth) != trojan.HeaderLen {
 			return next.ServeHTTP(w, r)
 		}
-		if ok := m.Upstream.Validate(auth); !ok {
+		if ok := m.upstream.Validate(auth); !ok {
 			return next.ServeHTTP(w, r)
 		}
 		if m.Verbose {
-			m.Logger.Info(fmt.Sprintf("handle trojan http%d from %v", r.ProtoMajor, r.RemoteAddr))
+			m.logger.Info(fmt.Sprintf("handle trojan http%d from %v", r.ProtoMajor, r.RemoteAddr))
 		}
 
-		nr, nw, err := m.Proxy.Handle(r.Body, NewFlushWriter(w))
+		nr, nw, err := trojan.HandleWithDialer(r.Body, NewFlushWriter(w), m.proxy)
 		if err != nil {
-			m.Logger.Error(fmt.Sprintf("handle http%d error: %v", r.ProtoMajor, err))
+			m.logger.Error(fmt.Sprintf("handle http%d error: %v", r.ProtoMajor, err))
 		}
-		m.Upstream.Consume(auth, nr, nw)
+		m.upstream.Consume(auth, nr, nw)
 		return nil
 	}
 
 	// handle websocket
 	if m.WebSocket && websocket.IsWebSocketUpgrade(r) {
-		conn, err := m.Upgrader.Upgrade(w, r, nil)
+		conn, err := m.upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return err
 		}
@@ -111,23 +115,24 @@ func (m *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 
 		b := [trojan.HeaderLen + 2]byte{}
 		if _, err := io.ReadFull(c, b[:]); err != nil {
-			m.Logger.Error(fmt.Sprintf("read trojan header error: %v", err))
+			m.logger.Error(fmt.Sprintf("read trojan header error: %v", err))
 			return nil
 		}
-		if ok := m.Upstream.Validate(x.ByteSliceToString(b[:trojan.HeaderLen])); !ok {
+		if ok := m.upstream.Validate(x.ByteSliceToString(b[:trojan.HeaderLen])); !ok {
 			return nil
 		}
 		if m.Verbose {
-			m.Logger.Info(fmt.Sprintf("handle trojan websocket.Conn from %v", r.RemoteAddr))
+			m.logger.Info(fmt.Sprintf("handle trojan websocket.Conn from %v", r.RemoteAddr))
 		}
 
-		nr, nw, err := m.Proxy.Handle(io.Reader(c), io.Writer(c))
+		nr, nw, err := trojan.HandleWithDialer(io.Reader(c), io.Writer(c), m.proxy)
 		if err != nil {
-			m.Logger.Error(fmt.Sprintf("handle websocket error: %v", err))
+			m.logger.Error(fmt.Sprintf("handle websocket error: %v", err))
 		}
-		m.Upstream.Consume(x.ByteSliceToString(b[:trojan.HeaderLen]), nr, nw)
+		m.upstream.Consume(x.ByteSliceToString(b[:trojan.HeaderLen]), nr, nw)
 		return nil
 	}
+
 	return next.ServeHTTP(w, r)
 }
 
@@ -153,6 +158,10 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Err("only one connect_method is not allowed")
 			}
 			h.Connect = true
+		case "proxy_name":
+			if !d.Args(&h.ProxyName) {
+				return d.ArgErr()
+			}
 		case "verbose":
 			if h.Verbose {
 				return d.Err("only one verbose is not allowed")
@@ -170,13 +179,11 @@ var (
 	_ caddyfile.Unmarshaler       = (*Handler)(nil)
 )
 
-// FlushWriter is ...
 type FlushWriter struct {
 	Writer  io.Writer
 	Flusher http.Flusher
 }
 
-// NewFlushWriter is ...
 func NewFlushWriter(w http.ResponseWriter) *FlushWriter {
 	return &FlushWriter{
 		Writer:  w,
@@ -184,7 +191,6 @@ func NewFlushWriter(w http.ResponseWriter) *FlushWriter {
 	}
 }
 
-// Write is ...
 func (c *FlushWriter) Write(b []byte) (int, error) {
 	n, err := c.Writer.Write(b)
 	c.Flusher.Flush()

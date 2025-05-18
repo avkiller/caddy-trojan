@@ -27,14 +27,12 @@ func init() {
 // and aead cipher defined by go-shadowsocks2, and return a normal page if
 // failed.
 type ListenerWrapper struct {
-	// Upstream is ...
-	Upstream app.Upstream `json:"-,omitempty"`
-	// Proxy is ...
-	Proxy app.Proxy `json:"-,omitempty"`
-	// Logger is ...
-	Logger *zap.Logger `json:"-,omitempty"`
-	// Verbose is ...
-	Verbose bool `json:"verbose,omitempty"`
+	upstream app.Upstream
+	proxy    app.Proxy
+	logger   *zap.Logger
+
+	ProxyName string `json:"proxy_name,omitempty"`
+	Verbose   bool   `json:"verbose,omitempty"`
 }
 
 // CaddyModule returns the Caddy module information.
@@ -47,8 +45,7 @@ func (ListenerWrapper) CaddyModule() caddy.ModuleInfo {
 
 // Provision implements caddy.Provisioner.
 func (m *ListenerWrapper) Provision(ctx caddy.Context) error {
-	m.Logger = ctx.Logger(m)
-	ctx.App(app.CaddyAppID)
+	m.logger = ctx.Logger(m)
 	if _, err := ctx.AppIfConfigured(app.CaddyAppID); err != nil {
 		return fmt.Errorf("trojan configure error: %w", err)
 	}
@@ -57,21 +54,47 @@ func (m *ListenerWrapper) Provision(ctx caddy.Context) error {
 		return err
 	}
 	app := mod.(*app.App)
-	m.Upstream = app.GetUpstream()
-	m.Proxy = app.GetProxy()
+	m.upstream = app.GetUpstream()
+	if m.ProxyName == "" {
+		m.proxy = app.GetProxy()
+		return nil
+	}
+	var ok bool
+	m.proxy, ok = app.GetProxyByName(m.ProxyName)
+	if !ok {
+		return fmt.Errorf("proxy name: %v does not exist", m.ProxyName)
+	}
 	return nil
 }
 
 // WrapListener implements caddy.ListenWrapper
 func (m *ListenerWrapper) WrapListener(l net.Listener) net.Listener {
-	ln := NewListener(l, m.Upstream, m.Proxy, m.Logger)
+	ln := NewListener(l, m.upstream, m.proxy, m.logger)
 	ln.Verbose = m.Verbose
 	go ln.loop()
 	return ln
 }
 
 // UnmarshalCaddyfile unmarshals Caddyfile tokens into h.
-func (*ListenerWrapper) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+func (m *ListenerWrapper) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	if !d.Next() {
+		return d.ArgErr()
+	}
+	args := d.RemainingArgs()
+	if len(args) > 0 {
+		return d.ArgErr()
+	}
+	for nesting := d.Nesting(); d.NextBlock(nesting); {
+		subdirective := d.Val()
+		switch subdirective {
+		case "verbose":
+			m.Verbose = true
+		case "proxy_name":
+			if !d.Args(&m.ProxyName) {
+				return d.ArgErr()
+			}
+		}
+	}
 	return nil
 }
 
@@ -82,26 +105,18 @@ var (
 	_ caddyfile.Unmarshaler = (*ListenerWrapper)(nil)
 )
 
-// Listener is ...
 type Listener struct {
 	Verbose bool
 
-	// Listener is ...
 	net.Listener
-	// Upstream is ...
 	Upstream app.Upstream
-	// Proxy is ...
-	Proxy app.Proxy
-	// Logger is ...
-	Logger *zap.Logger
+	Proxy    app.Proxy
+	Logger   *zap.Logger
 
-	// return *rawConn
-	conns chan net.Conn
-	// close channel
+	conns  chan net.Conn
 	closed chan struct{}
 }
 
-// NewListener is ...
 func NewListener(ln net.Listener, up app.Upstream, px app.Proxy, logger *zap.Logger) *Listener {
 	l := &Listener{
 		Listener: ln,
@@ -114,7 +129,6 @@ func NewListener(ln net.Listener, up app.Upstream, px app.Proxy, logger *zap.Log
 	return l
 }
 
-// Accept is ...
 func (l *Listener) Accept() (net.Conn, error) {
 	select {
 	case <-l.closed:
@@ -124,7 +138,6 @@ func (l *Listener) Accept() (net.Conn, error) {
 	}
 }
 
-// Close is ...
 func (l *Listener) Close() error {
 	select {
 	case <-l.closed:
@@ -135,7 +148,6 @@ func (l *Listener) Close() error {
 	return nil
 }
 
-// loop is ...
 func (l *Listener) loop() {
 	for {
 		conn, err := l.Listener.Accept()
@@ -194,7 +206,7 @@ func (l *Listener) loop() {
 				lg.Info(fmt.Sprintf("handle trojan net.Conn from %v", c.RemoteAddr()))
 			}
 
-			nr, nw, err := l.Proxy.Handle(io.Reader(c), io.Writer(c))
+			nr, nw, err := trojan.HandleWithDialer(io.Reader(c), io.Writer(c), l.Proxy)
 			if err != nil {
 				lg.Error(fmt.Sprintf("handle net.Conn error: %v", err))
 			}

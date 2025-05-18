@@ -17,24 +17,22 @@ import (
 
 func init() {
 	caddy.RegisterModule(CaddyUpstream{})
-	caddy.RegisterModule(MemoryUpstream{})
+	caddy.RegisterModule((*MemoryUpstream)(nil))
 }
 
-// Upstream is ...
+type Traffic struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
 type Upstream interface {
-	// Add is ...
 	Add(string) error
-	// Delete is ...
 	Delete(string) error
-	// Range is ...
 	Range(func(string, int64, int64))
-	// Validate is ...
 	Validate(string) bool
-	// Consume is ...
 	Consume(string, int64, int64) error
 }
 
-// TaskType is ...
 type TaskType int
 
 const (
@@ -43,7 +41,6 @@ const (
 	TaskConsume
 )
 
-// Task is ...
 type Task struct {
 	Type  TaskType
 	Value struct {
@@ -53,9 +50,7 @@ type Task struct {
 	}
 }
 
-// MemoryUpstream is ...
 type MemoryUpstream struct {
-	// UpstreamRaw is ...
 	UpstreamRaw json.RawMessage `json:"persist" caddy:"namespace=trojan.upstream inline_key=upstream"`
 
 	ch chan Task
@@ -65,19 +60,18 @@ type MemoryUpstream struct {
 	mm map[string]Traffic
 }
 
-// CaddyModule is ...
-func (MemoryUpstream) CaddyModule() caddy.ModuleInfo {
+func (*MemoryUpstream) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "trojan.upstream.memory",
 		New: func() caddy.Module { return new(MemoryUpstream) },
 	}
 }
 
-// Provision is ...
 func (u *MemoryUpstream) Provision(ctx caddy.Context) error {
 	u.mm = make(map[string]Traffic)
 
 	if u.UpstreamRaw == nil {
+		u.ch = make(chan Task)
 		return nil
 	}
 
@@ -116,13 +110,14 @@ func (u *MemoryUpstream) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// Cleanup is ...
 func (u *MemoryUpstream) Cleanup() error {
+	if u.ch == nil {
+		return nil
+	}
 	close(u.ch)
 	return nil
 }
 
-// Add is ...
 func (u *MemoryUpstream) Add(s string) error {
 	b := [trojan.HeaderLen]byte{}
 	trojan.GenKey(s, b[:])
@@ -139,7 +134,6 @@ func (u *MemoryUpstream) Add(s string) error {
 	return nil
 }
 
-// AddKey is ...
 func (u *MemoryUpstream) AddKey(key string) {
 	u.mu.Lock()
 	u.mm[key] = Traffic{
@@ -149,7 +143,6 @@ func (u *MemoryUpstream) AddKey(key string) {
 	u.mu.Unlock()
 }
 
-// Delete is ...
 func (u *MemoryUpstream) Delete(s string) error {
 	b := [trojan.HeaderLen]byte{}
 	trojan.GenKey(s, b[:])
@@ -168,7 +161,6 @@ func (u *MemoryUpstream) Delete(s string) error {
 	return nil
 }
 
-// Range is ...
 func (u *MemoryUpstream) Range(fn func(string, int64, int64)) {
 	u.mu.RLock()
 	for k, v := range u.mm {
@@ -177,7 +169,6 @@ func (u *MemoryUpstream) Range(fn func(string, int64, int64)) {
 	u.mu.RUnlock()
 }
 
-// Validate is ...
 func (u *MemoryUpstream) Validate(k string) bool {
 	u.mu.RLock()
 	_, ok := u.mm[k]
@@ -185,7 +176,6 @@ func (u *MemoryUpstream) Validate(k string) bool {
 	return ok
 }
 
-// Consume is ...
 func (u *MemoryUpstream) Consume(k string, nr, nw int64) error {
 	u.mu.Lock()
 	traffic := u.mm[k]
@@ -206,17 +196,12 @@ func (u *MemoryUpstream) Consume(k string, nr, nw int64) error {
 	return nil
 }
 
-// CaddyUpstream is ...
 type CaddyUpstream struct {
-	// Prefix is ...
-	Prefix string `json:"-,omitempty"`
-	// Storage is ...
-	Storage certmagic.Storage `json:"-,omitempty"`
-	// Logger is ...
-	Logger *zap.Logger `json:"-,omitempty"`
+	prefix  string
+	storage certmagic.Storage
+	logger  *zap.Logger
 }
 
-// CaddyModule is ...
 func (CaddyUpstream) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "trojan.upstream.caddy",
@@ -224,20 +209,18 @@ func (CaddyUpstream) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision is ...
 func (u *CaddyUpstream) Provision(ctx caddy.Context) error {
-	u.Prefix = "trojan/"
-	u.Storage = ctx.Storage()
-	u.Logger = ctx.Logger(u)
+	u.prefix = "trojan/"
+	u.storage = ctx.Storage()
+	u.logger = ctx.Logger(u)
 	return nil
 }
 
-// Add is ...
 func (u *CaddyUpstream) Add(s string) error {
 	b := [trojan.HeaderLen]byte{}
 	trojan.GenKey(s, b[:])
-	key := u.Prefix + string(b[:])
-	if u.Storage.Exists(context.Background(), key) {
+	key := u.prefix + string(b[:])
+	if u.storage.Exists(context.Background(), key) {
 		return nil
 	}
 	traffic := Traffic{
@@ -248,58 +231,52 @@ func (u *CaddyUpstream) Add(s string) error {
 	if err != nil {
 		return err
 	}
-	return u.Storage.Store(context.Background(), key, bb)
+	return u.storage.Store(context.Background(), key, bb)
 }
 
-// Delete is ...
 func (u *CaddyUpstream) Delete(s string) error {
 	b := [trojan.HeaderLen]byte{}
 	trojan.GenKey(s, b[:])
-	key := u.Prefix + x.ByteSliceToString(b[:])
-	if !u.Storage.Exists(context.Background(), key) {
+	key := u.prefix + x.ByteSliceToString(b[:])
+	if !u.storage.Exists(context.Background(), key) {
 		return nil
 	}
-	return u.Storage.Delete(context.Background(), key)
+	return u.storage.Delete(context.Background(), key)
 }
 
-// Range is ...
 func (u *CaddyUpstream) Range(fn func(k string, up, down int64)) {
-	prekeys, err := u.Storage.List(context.Background(), u.Prefix, false)
+	prekeys, err := u.storage.List(context.Background(), u.prefix, false)
 	if err != nil {
 		return
 	}
 
 	traffic := Traffic{}
 	for _, k := range prekeys {
-		b, err := u.Storage.Load(context.Background(), k)
+		b, err := u.storage.Load(context.Background(), k)
 		if err != nil {
-			u.Logger.Error(fmt.Sprintf("load user error: %v", err))
+			u.logger.Error(fmt.Sprintf("load user error: %v", err))
 			continue
 		}
 		if err := json.Unmarshal(b, &traffic); err != nil {
-			u.Logger.Error(fmt.Sprintf("load user error: %v", err))
+			u.logger.Error(fmt.Sprintf("load user error: %v", err))
 			continue
 		}
-		fn(strings.TrimPrefix(k, u.Prefix), traffic.Up, traffic.Down)
+		fn(strings.TrimPrefix(k, u.prefix), traffic.Up, traffic.Down)
 	}
-
-	return
 }
 
-// Validate is ...
 func (u *CaddyUpstream) Validate(k string) bool {
-	key := u.Prefix + k
-	return u.Storage.Exists(context.Background(), key)
+	key := u.prefix + k
+	return u.storage.Exists(context.Background(), key)
 }
 
-// Consume is ...
 func (u *CaddyUpstream) Consume(k string, nr, nw int64) error {
-	key := u.Prefix + k
+	key := u.prefix + k
 
-	u.Storage.Lock(context.Background(), key)
-	defer u.Storage.Unlock(context.Background(), key)
+	u.storage.Lock(context.Background(), key)
+	defer u.storage.Unlock(context.Background(), key)
 
-	b, err := u.Storage.Load(context.Background(), key)
+	b, err := u.storage.Load(context.Background(), key)
 	if err != nil {
 		return err
 	}
@@ -317,7 +294,7 @@ func (u *CaddyUpstream) Consume(k string, nr, nw int64) error {
 		return err
 	}
 
-	return u.Storage.Store(context.Background(), key, b)
+	return u.storage.Store(context.Background(), key, b)
 }
 
 var (

@@ -1,4 +1,4 @@
-# Caddy-Trojan
+# Caddy-Trojan -- A Caddy Module for Trojan Proxy
 
 ## Build with xcaddy
 ```
@@ -15,8 +15,17 @@ $ xcaddy build --with github.com/imgk/caddy-trojan
 		}
 	}
 	trojan {
-		no_proxy
 		caddy
+		# memory
+
+		no_proxy
+		# env_proxy
+		# socks_proxy server user passwd
+		# socks_proxy server
+		# http_proxy server user passwd
+		# http_proxy server
+		# named_proxy proxy_name proxy_type args...
+
 		users pass1234 word5678
 	}
 }
@@ -40,13 +49,15 @@ $ xcaddy build --with github.com/imgk/caddy-trojan
         "srv0": {
           "listen": [":443"],
           "listener_wrappers": [{
-            "wrapper": "trojan"
+            "wrapper": "trojan",
+            "proxy_name": "proxy_2"
           }],
           "routes": [{
             "handle": [{
               "handler": "trojan",
               "connect_method": true,
-              "websocket": true
+              "websocket": true,
+              "proxy_name": "proxy_3"
             },
             {
               "handler": "file_server",
@@ -57,10 +68,23 @@ $ xcaddy build --with github.com/imgk/caddy-trojan
       }
     },
     "trojan": {
-      "proxy": {
-        "proxy": "no_proxy"
+      "named_proxy": {
+        "proxy_1": {
+          "proxy": "none"
+        },
+        "proxy_2": {
+          "proxy": "socks",
+          "server": "127.0.0.1:1080"
+        },
+        "proxy_3": {
+          "proxy": "http",
+          "server": "127.0.0.1:8080"
+        }
       },
-      "upstream": {
+      "proxy": { //optional
+        "proxy": "none"
+      },
+      "upstream": { //optional
         "upstream": "caddy"
       },
       "users": ["pass1234","word5678"]

@@ -15,10 +15,8 @@ func init() {
 	caddy.RegisterModule(Admin{})
 }
 
-// Admin is ...
 type Admin struct {
-	// Upstream is ...
-	Upstream app.Upstream
+	upstream app.Upstream
 }
 
 // CaddyModule returns the Caddy module information.
@@ -29,18 +27,19 @@ func (Admin) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision is ...
 func (al *Admin) Provision(ctx caddy.Context) error {
-	ctx.App(app.CaddyAppID)
 	if _, err := ctx.AppIfConfigured(app.CaddyAppID); err != nil {
-		return nil
+		if errors.Is(err, caddy.ErrNotConfigured) {
+			return nil
+		}
+		return err
 	}
 	mod, err := ctx.App(app.CaddyAppID)
 	if err != nil {
 		return err
 	}
 	app := mod.(*app.App)
-	al.Upstream = app.GetUpstream()
+	al.upstream = app.GetUpstream()
 	return nil
 }
 
@@ -62,9 +61,8 @@ func (al *Admin) Routes() []caddy.AdminRoute {
 	}
 }
 
-// GetUsers is ...
 func (al *Admin) GetUsers(w http.ResponseWriter, r *http.Request) error {
-	if al.Upstream == nil {
+	if al.upstream == nil {
 		return nil
 	}
 
@@ -79,7 +77,7 @@ func (al *Admin) GetUsers(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	users := make([]User, 0)
-	al.Upstream.Range(func(key string, up, down int64) {
+	al.upstream.Range(func(key string, up, down int64) {
 		users = append(users, User{Key: key, Up: up, Down: down})
 	})
 
@@ -88,9 +86,8 @@ func (al *Admin) GetUsers(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// AddUser is ...
 func (al *Admin) AddUser(w http.ResponseWriter, r *http.Request) error {
-	if al.Upstream == nil {
+	if al.upstream == nil {
 		return nil
 	}
 
@@ -111,16 +108,15 @@ func (al *Admin) AddUser(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if user.Password != "" {
-		al.Upstream.Add(user.Password)
+		al.upstream.Add(user.Password)
 	}
 
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
 
-// DeleteUser is ...
 func (al *Admin) DeleteUser(w http.ResponseWriter, r *http.Request) error {
-	if al.Upstream == nil {
+	if al.upstream == nil {
 		return nil
 	}
 
@@ -141,7 +137,7 @@ func (al *Admin) DeleteUser(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if user.Password != "" {
-		al.Upstream.Delete(user.Password)
+		al.upstream.Delete(user.Password)
 	}
 
 	w.WriteHeader(http.StatusOK)

@@ -7,7 +7,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
-	"github.com/imgk/caddy-trojan/pkgs/x"
+	"github.com/avkiller/caddy-trojan/pkgs/x"
 )
 
 func init() {

@@ -16,9 +16,9 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 
-	"github.com/imgk/caddy-trojan/pkgs/domaintree"
-	"github.com/imgk/caddy-trojan/pkgs/trojan"
-	"github.com/imgk/caddy-trojan/pkgs/x"
+	"github.com/avkiller/caddy-trojan/pkgs/domaintree"
+	"github.com/avkiller/caddy-trojan/pkgs/trojan"
+	"github.com/avkiller/caddy-trojan/pkgs/x"
 )
 
 func init() {

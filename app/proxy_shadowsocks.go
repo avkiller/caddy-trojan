@@ -7,7 +7,7 @@ import (
 	"net"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/imgk/caddy-trojan/pkgs/trojan"
+	"github.com/avkiller/caddy-trojan/pkgs/trojan"
 
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"

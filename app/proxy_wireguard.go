@@ -6,7 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/imgk/caddy-trojan/pkgs/trojan"
+	"github.com/avkiller/caddy-trojan/pkgs/trojan"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"

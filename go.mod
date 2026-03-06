@@ -3,7 +3,7 @@ module github.com/imgk/caddy-trojan
 go 1.25.0
 
 require (
-	github.com/caddyserver/caddy/v2 v2.11.1
+	github.com/caddyserver/caddy/v2 v2.11.2
 	github.com/caddyserver/certmagic v0.25.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/imgk/memory-go v0.2.0
